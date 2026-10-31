@@ -1,0 +1,40 @@
+---
+# Runs on broker1. Proves events are really flowing: count the events twice,
+# 10 seconds apart, and the number must grow. Then show the consumer group.
+
+- name: Count the events (first reading)
+  ansible.builtin.shell: >
+    {{ kafka_bin }}/kafka-run-class.sh kafka.tools.GetOffsetShell
+    --bootstrap-server {{ bootstrap_servers }} --topic {{ app_topic }}
+    | awk -F: '{s+=$3} END{print s+0}'
+  register: first
+  changed_when: false
+
+- name: Wait 10 seconds
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Count the events (second reading)
+  ansible.builtin.shell: >
+    {{ kafka_bin }}/kafka-run-class.sh kafka.tools.GetOffsetShell
+    --bootstrap-server {{ bootstrap_servers }} --topic {{ app_topic }}
+    | awk -F: '{s+=$3} END{print s+0}'
+  register: second
+  changed_when: false
+
+- name: The number of events must have grown
+  ansible.builtin.assert:
+    that: second.stdout | int > first.stdout | int
+    success_msg: "OK: events are flowing ({{ first.stdout }} -> {{ second.stdout }})"
+    fail_msg: "No new events in 10 seconds. Check the event-producer service on the bastion."
+
+- name: Show the consumer group (position and lag per partition)
+  ansible.builtin.command: >
+    {{ kafka_bin }}/kafka-consumer-groups.sh --bootstrap-server {{ bootstrap_servers }}
+    --describe --group {{ consumer_group }}
+  register: group
+  changed_when: false
+
+- name: Show it
+  ansible.builtin.debug:
+    var: group.stdout_lines

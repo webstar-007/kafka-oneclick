@@ -1,0 +1,121 @@
+---
+# Runs on the bastion. Installs Kafka UI (a web page) and the demo app
+# (a producer that sends one event per second and a consumer that reads them).
+
+- name: Install Java, Python tools
+  ansible.builtin.apt:
+    name: [openjdk-17-jre-headless, python3-venv, python3-pip]
+    update_cache: true
+  retries: 5
+  delay: 10
+  register: apt_result
+  until: apt_result is succeeded
+
+# ---------- Kafka UI ----------
+- name: Create the kafkaui user
+  ansible.builtin.user:
+    name: kafkaui
+    system: true
+    shell: /usr/sbin/nologin
+
+- name: Create the Kafka UI folder
+  ansible.builtin.file:
+    path: "{{ kafka_ui_dir }}"
+    state: directory
+    owner: kafkaui
+    mode: "0755"
+
+- name: Download Kafka UI
+  ansible.builtin.get_url:
+    url: "https://github.com/provectus/kafka-ui/releases/download/{{ kafka_ui_version }}/kafka-ui-api-{{ kafka_ui_version }}.jar"
+    dest: "{{ kafka_ui_dir }}/kafka-ui.jar"
+    mode: "0644"
+  retries: 3
+  delay: 10
+  notify: restart kafka-ui
+
+- name: Install the Kafka UI service
+  ansible.builtin.template:
+    src: kafka-ui.service.j2
+    dest: /etc/systemd/system/kafka-ui.service
+    mode: "0644"
+  notify: restart kafka-ui
+
+- name: Apply pending restarts now (so everything starts once, with the final settings)
+  ansible.builtin.meta: flush_handlers
+
+- name: Start Kafka UI
+  ansible.builtin.systemd:
+    name: kafka-ui
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ---------- Demo app ----------
+- name: Create the eventapp user
+  ansible.builtin.user:
+    name: eventapp
+    system: true
+    shell: /usr/sbin/nologin
+
+- name: Create the app folder
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: eventapp
+    mode: "0755"
+
+- name: Python environment with the kafka-python library
+  ansible.builtin.pip:
+    name: "kafka-python>=2.1.5,<3.0"
+    virtualenv: "{{ app_dir }}/venv"
+    virtualenv_command: python3 -m venv
+
+- name: Copy producer.py and consumer.py
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ app_dir }}/{{ item }}"
+    mode: "0644"
+  loop: [producer.py, consumer.py]
+  notify: restart event apps
+
+- name: Write the app settings (broker list comes from the inventory)
+  ansible.builtin.template:
+    src: event-app.env.j2
+    dest: /etc/event-app.env
+    mode: "0644"
+  notify: restart event apps
+
+- name: Install the producer and consumer services
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    mode: "0644"
+  loop: [event-producer, event-consumer]
+  notify: restart event apps
+
+- name: Apply pending restarts now
+  ansible.builtin.meta: flush_handlers
+
+- name: Start the producer and consumer
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [event-producer, event-consumer]
+
+# ---------- Check ----------
+- name: Wait until Kafka UI answers (Java needs about a minute)
+  ansible.builtin.uri:
+    url: "http://localhost:{{ kafka_ui_port }}/actuator/health"
+    status_code: 200
+  register: ui_health
+  retries: 30
+  delay: 5
+  until: ui_health.status == 200
+
+- name: Make sure the 3 services are running
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  loop: [kafka-ui, event-producer, event-consumer]
+  changed_when: false

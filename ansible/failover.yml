@@ -1,0 +1,76 @@
+---
+# Failover demo. Jenkins: Build with Parameters, ACTION=failover-demo (after a deploy).
+# It stops Kafka on broker 3 while the producer keeps running, shows that events keep flowing,
+# then starts broker 3 again and shows it rejoining. Keep Kafka UI open while it runs.
+- name: Failover demo
+  hosts: broker1
+  gather_facts: false
+  vars:
+    kafka_bin: /opt/kafka/bin
+    topic: order-events-live
+    bootstrap: "{{ hostvars['broker1'].ansible_host }}:9092,{{ hostvars['broker2'].ansible_host }}:9092"
+    offsets_cmd: "{{ kafka_bin }}/kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server {{ bootstrap }} --topic {{ topic }} | awk -F: '{s+=$3} END{print s+0}'"
+    describe_cmd: "{{ kafka_bin }}/kafka-topics.sh --bootstrap-server {{ bootstrap }} --describe --topic {{ topic }}"
+  tasks:
+    - name: Describe before
+      ansible.builtin.command: "{{ describe_cmd }}"
+      register: before
+      changed_when: false
+
+    - name: Events in the topic before the failure
+      ansible.builtin.shell: "{{ offsets_cmd }}"
+      register: count_before
+      changed_when: false
+
+    - name: Stop Kafka on broker 3
+      ansible.builtin.systemd:
+        name: kafka
+        state: stopped
+      delegate_to: broker3
+      become: true
+
+    - name: Give the controller time to elect new leaders, and the producer time to continue
+      ansible.builtin.pause:
+        seconds: 25
+
+    - name: Describe during the failure
+      ansible.builtin.command: "{{ describe_cmd }}"
+      register: during
+      changed_when: false
+
+    - name: Events in the topic during the failure
+      ansible.builtin.shell: "{{ offsets_cmd }}"
+      register: count_during
+      changed_when: false
+
+    - name: Producer kept writing while broker 3 was down
+      ansible.builtin.assert:
+        that: count_during.stdout | int > count_before.stdout | int
+        success_msg: "OK: {{ count_before.stdout }} -> {{ count_during.stdout }} events written during the failure"
+        fail_msg: "No new events while broker 3 was down"
+
+    - name: Start Kafka on broker 3 again
+      ansible.builtin.systemd:
+        name: kafka
+        state: started
+      delegate_to: broker3
+      become: true
+
+    - name: Wait for it to catch up
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Describe after recovery
+      ansible.builtin.command: "{{ describe_cmd }}"
+      register: after
+      changed_when: false
+
+    - name: Show all three states
+      ansible.builtin.debug:
+        msg:
+          - "BEFORE:"
+          - "{{ before.stdout_lines }}"
+          - "BROKER 3 DOWN (events {{ count_before.stdout }} -> {{ count_during.stdout }}):"
+          - "{{ during.stdout_lines }}"
+          - "AFTER RECOVERY:"
+          - "{{ after.stdout_lines }}"

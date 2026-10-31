@@ -1,0 +1,7 @@
+keys/
+terraform/.terraform/
+terraform/*.tfstate*
+ansible/inventory.ini
+*.pem
+docs/
+README.md

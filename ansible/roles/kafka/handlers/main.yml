@@ -1,0 +1,21 @@
+---
+# Handlers run once at the end, only when a notified task changed something.
+
+- name: restart kafka
+  ansible.builtin.systemd:
+    name: kafka
+    state: restarted
+    daemon_reload: true
+
+- name: restart kafka-ui
+  ansible.builtin.systemd:
+    name: kafka-ui
+    state: restarted
+    daemon_reload: true
+
+- name: restart event apps
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: [event-producer, event-consumer]

@@ -1,0 +1,27 @@
+---
+# All settings of the role in one place. Change them here, not inside the tasks.
+
+# ----- Kafka -----
+kafka_version: "3.8.0"
+scala_version: "2.13"
+kafka_cluster_id: "MkU3OEVBNTcwNTJENDM2Qk"   # any fixed valid id; the same on all brokers
+kafka_data_dir: /var/lib/kafka/data
+kafka_heap: "-Xms512m -Xmx512m"              # small, because the servers are t3.small
+kafka_bin: /opt/kafka/bin
+
+# The list "ip:9092,ip:9092,ip:9092", built from the inventory file
+bootstrap_servers: "{{ groups['brokers'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '$', ':9092') | join(',') }}"
+
+# ----- Topics -----
+smoke_topic: demo-orders
+app_topic: order-events-live
+
+# ----- Kafka UI (runs on the bastion) -----
+kafka_ui_version: "v0.7.2"
+kafka_ui_dir: /opt/kafka-ui
+kafka_ui_port: 8080
+
+# ----- Demo app: producer and consumer (run on the bastion) -----
+app_dir: /opt/event-app
+producer_interval: "1"        # seconds between events
+consumer_group: order-processor

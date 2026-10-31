@@ -1,0 +1,13 @@
+[Unit]
+Description=Kafka demo producer
+After=network-online.target
+
+[Service]
+User=eventapp
+EnvironmentFile=/etc/event-app.env
+ExecStart={{ app_dir }}/venv/bin/python -u {{ app_dir }}/producer.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

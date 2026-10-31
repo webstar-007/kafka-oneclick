@@ -1,0 +1,62 @@
+---
+# THE ONE PLAYBOOK. It uses the single role "kafka" in five small steps.
+# Jenkins runs one step at a time with --tags, so each step is its own pipeline stage:
+#   --tags install   Kafka on the 3 brokers
+#   --tags smoke     quick test with 5 messages
+#   --tags topic     create the topic for the live demo
+#   --tags apps      Kafka UI + producer + consumer on the bastion
+#   --tags verify    prove events are flowing
+# Run everything at once with:  ansible-playbook site.yml
+
+- name: Step 1 - Install the Kafka cluster on the 3 brokers
+  hosts: brokers
+  become: true
+  gather_facts: false
+  tags: install
+  tasks:
+    - name: Wait until SSH works (servers may still be starting)
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+    - name: Collect facts about the server
+      ansible.builtin.setup:
+    - name: Run the role part that installs Kafka
+      ansible.builtin.import_role:
+        name: kafka
+        tasks_from: install_kafka.yml
+
+- name: Step 2 - Smoke test (topic, 5 messages out and back)
+  hosts: broker1
+  gather_facts: false
+  tags: smoke
+  tasks:
+    - ansible.builtin.import_role:
+        name: kafka
+        tasks_from: smoke_test.yml
+
+- name: Step 3 - Create the topic used by the live demo
+  hosts: broker1
+  gather_facts: false
+  tags: topic
+  tasks:
+    - ansible.builtin.import_role:
+        name: kafka
+        tasks_from: create_topic.yml
+
+- name: Step 4 - Kafka UI, producer and consumer on the bastion
+  hosts: bastion
+  become: true
+  tags: apps
+  tasks:
+    - ansible.builtin.import_role:
+        name: kafka
+        tasks_from: ui_and_app.yml
+
+- name: Step 5 - Verify that events are flowing
+  hosts: broker1
+  gather_facts: false
+  tags: verify
+  tasks:
+    - ansible.builtin.import_role:
+        name: kafka
+        tasks_from: verify.yml

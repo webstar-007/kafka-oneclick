@@ -1,0 +1,12 @@
+---
+# Runs on broker1. Creates the topic that the demo producer writes to.
+
+- name: Create the live demo topic (3 partitions, 3 copies)
+  ansible.builtin.command: >
+    {{ kafka_bin }}/kafka-topics.sh --bootstrap-server {{ bootstrap_servers }}
+    --create --if-not-exists --topic {{ app_topic }} --partitions 3 --replication-factor 3
+  register: created
+  retries: 10
+  delay: 10
+  until: created.rc == 0
+  changed_when: false

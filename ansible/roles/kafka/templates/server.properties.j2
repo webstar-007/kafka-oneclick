@@ -1,0 +1,22 @@
+# Managed by Ansible. KRaft mode: every node is both broker and controller.
+process.roles=broker,controller
+node.id={{ node_id }}
+controller.quorum.voters={% for h in groups['brokers'] %}{{ hostvars[h].node_id }}@{{ hostvars[h].ansible_host }}:9093{% if not loop.last %},{% endif %}{% endfor %}
+
+listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+advertised.listeners=PLAINTEXT://{{ ansible_host }}:9092
+inter.broker.listener.name=PLAINTEXT
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+
+log.dirs={{ kafka_data_dir }}
+num.partitions=3
+
+# Durability: 3 copies, writes need at least 2 in sync
+default.replication.factor=3
+min.insync.replicas=2
+offsets.topic.replication.factor=3
+transaction.state.log.replication.factor=3
+transaction.state.log.min.isr=2
+
+log.retention.hours=168

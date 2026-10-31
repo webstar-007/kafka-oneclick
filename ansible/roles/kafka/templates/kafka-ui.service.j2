@@ -1,0 +1,16 @@
+[Unit]
+Description=Kafka UI
+After=network-online.target
+
+[Service]
+User=kafkaui
+Environment="KAFKA_CLUSTERS_0_NAME=kafka-demo"
+Environment="KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS={% for h in groups['brokers'] %}{{ hostvars[h].ansible_host }}:9092{% if not loop.last %},{% endif %}{% endfor %}"
+Environment="SERVER_PORT={{ kafka_ui_port }}"
+Environment="DYNAMIC_CONFIG_ENABLED=false"
+ExecStart=/usr/bin/java -Xmx512m --add-opens java.rmi/javax.rmi.ssl=ALL-UNNAMED -jar {{ kafka_ui_dir }}/kafka-ui.jar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

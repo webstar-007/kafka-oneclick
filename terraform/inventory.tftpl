@@ -1,0 +1,18 @@
+[brokers]
+%{ for i, ip in broker_ips ~}
+broker${i + 1} ansible_host=${ip} node_id=${i + 1}
+%{ endfor ~}
+
+[bastion]
+bastion1 ansible_host=${bastion_ip}
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=${key_path}
+ansible_python_interpreter=/usr/bin/python3
+
+[brokers:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -i ${key_path} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${bastion_ip}"'
+
+[bastion:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

@@ -1,0 +1,15 @@
+[Unit]
+Description=Apache Kafka (KRaft)
+After=network.target
+
+[Service]
+User=kafka
+Group=kafka
+Environment="KAFKA_HEAP_OPTS={{ kafka_heap }}"
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,45 @@
+---
+# Runs on broker1. A quick check that the cluster really works:
+# make a topic, send 5 messages, read them back, show the partitions.
+
+- name: Create the test topic (3 partitions, 3 copies)
+  ansible.builtin.command: >
+    {{ kafka_bin }}/kafka-topics.sh --bootstrap-server {{ bootstrap_servers }}
+    --create --if-not-exists --topic {{ smoke_topic }} --partitions 3 --replication-factor 3
+  register: created
+  retries: 10
+  delay: 10
+  until: created.rc == 0
+  changed_when: false
+
+- name: Send 5 messages
+  ansible.builtin.shell: |
+    for i in 1 2 3 4 5; do echo "order-$i created"; done | \
+    {{ kafka_bin }}/kafka-console-producer.sh --bootstrap-server {{ bootstrap_servers }} --topic {{ smoke_topic }}
+  changed_when: false
+
+- name: Read the messages back
+  ansible.builtin.command: >
+    {{ kafka_bin }}/kafka-console-consumer.sh --bootstrap-server {{ bootstrap_servers }}
+    --topic {{ smoke_topic }} --from-beginning --max-messages 5 --timeout-ms 30000
+  register: consumed
+  changed_when: false
+
+- name: Describe the topic (leader, replicas, in-sync replicas)
+  ansible.builtin.command: >
+    {{ kafka_bin }}/kafka-topics.sh --bootstrap-server {{ bootstrap_servers }}
+    --describe --topic {{ smoke_topic }}
+  register: described
+  changed_when: false
+
+- name: The test passes only if all 5 messages came back
+  ansible.builtin.assert:
+    that: consumed.stdout_lines | length == 5
+    success_msg: "SMOKE TEST PASSED: 5 messages sent and read back"
+    fail_msg: "SMOKE TEST FAILED: expected 5 messages, got {{ consumed.stdout_lines | length }}"
+
+- name: Show the result
+  ansible.builtin.debug:
+    msg:
+      - "MESSAGES READ BACK: {{ consumed.stdout_lines }}"
+      - "{{ described.stdout_lines }}"
