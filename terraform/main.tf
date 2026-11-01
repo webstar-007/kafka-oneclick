@@ -10,6 +10,7 @@ data "aws_availability_zones" "available" {
 # Zones that offer our server type (for example us-east-1e does not offer t3.small)
 data "aws_ec2_instance_type_offerings" "broker" {
   location_type = "availability-zone"
+
   filter {
     name   = "instance-type"
     values = [var.broker_instance_type]
@@ -20,6 +21,7 @@ data "aws_ec2_instance_type_offerings" "broker" {
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
+
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
@@ -28,11 +30,28 @@ data "aws_ami" "ubuntu" {
 
 locals {
   # one zone per broker
-  azs  = slice(sort(tolist(setintersection(toset(data.aws_availability_zones.available.names), toset(data.aws_ec2_instance_type_offerings.broker.locations)))), 0, var.broker_count)
-  tags = { Project = var.project } # every resource gets this tag, so we can find and check it later
+  azs = slice(
+    sort(
+      tolist(
+        setintersection(
+          toset(data.aws_availability_zones.available.names),
+          toset(data.aws_ec2_instance_type_offerings.broker.locations)
+        )
+      )
+    ),
+    0,
+    var.broker_count
+  )
+
+  tags = {
+    Project = var.project
+  }
 }
 
-# ---------- 1. SSH key: created here, saved in keys/, never committed to Git ----------
+# ============================================================================
+# 1. SSH key: created here, saved in keys/, never committed to Git
+# ============================================================================
+
 resource "tls_private_key" "ssh" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -49,16 +68,25 @@ resource "local_sensitive_file" "pem" {
   file_permission = "0600"
 }
 
-# ---------- 2. Network: one VPC, one subnet per availability zone ----------
+# ============================================================================
+# 2. Network: one VPC, one subnet per availability zone
+# ============================================================================
+
 resource "aws_vpc" "this" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
-  tags                 = merge(local.tags, { Name = "${var.project}-vpc" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-vpc"
+  })
 }
 
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
-  tags   = merge(local.tags, { Name = "${var.project}-igw" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-igw"
+  })
 }
 
 resource "aws_subnet" "this" {
@@ -66,17 +94,24 @@ resource "aws_subnet" "this" {
   vpc_id                  = aws_vpc.this.id
   cidr_block              = "10.0.${count.index}.0/24"
   availability_zone       = local.azs[count.index]
-  map_public_ip_on_launch = true # servers get a public IP so they can download Kafka (no NAT gateway needed)
-  tags                    = merge(local.tags, { Name = "${var.project}-subnet-${count.index + 1}" })
+  map_public_ip_on_launch = true
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-subnet-${count.index + 1}"
+  })
 }
 
 resource "aws_route_table" "this" {
   vpc_id = aws_vpc.this.id
+
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.this.id
   }
-  tags = merge(local.tags, { Name = "${var.project}-rt" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-rt"
+  })
 }
 
 resource "aws_route_table_association" "this" {
@@ -85,25 +120,43 @@ resource "aws_route_table_association" "this" {
   route_table_id = aws_route_table.this.id
 }
 
-# ---------- 3. Firewalls (security groups) ----------
+# ============================================================================
+# 3. Firewalls (security groups)
+# ============================================================================
+
 resource "aws_security_group" "bastion" {
   name        = "${var.project}-bastion"
-  description = "SSH to the bastion (key login only)"
+  description = "SSH access and Kafka UI on the bastion"
   vpc_id      = aws_vpc.this.id
 
+  # SSH access
   ingress {
+    description = "SSH access"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = [var.allowed_ssh_cidr]
   }
+
+  # Kafka UI access from your allowed IP/CIDR
+  ingress {
+    description = "Kafka UI access"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ssh_cidr]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = merge(local.tags, { Name = "${var.project}-bastion-sg" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-bastion-sg"
+  })
 }
 
 resource "aws_security_group" "broker" {
@@ -118,6 +171,7 @@ resource "aws_security_group" "broker" {
     protocol        = "tcp"
     security_groups = [aws_security_group.bastion.id]
   }
+
   ingress {
     description = "Brokers talk to each other"
     from_port   = 9092
@@ -125,6 +179,7 @@ resource "aws_security_group" "broker" {
     protocol    = "tcp"
     self        = true
   }
+
   ingress {
     description     = "Kafka clients on the bastion (producer, consumer, Kafka UI)"
     from_port       = 9092
@@ -132,23 +187,34 @@ resource "aws_security_group" "broker" {
     protocol        = "tcp"
     security_groups = [aws_security_group.bastion.id]
   }
+
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = merge(local.tags, { Name = "${var.project}-broker-sg" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-broker-sg"
+  })
 }
 
-# ---------- 4. Servers ----------
+# ============================================================================
+# 4. Servers
+# ============================================================================
+
 resource "aws_instance" "bastion" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.bastion_instance_type
   subnet_id              = aws_subnet.this[0].id
   key_name               = aws_key_pair.this.key_name
   vpc_security_group_ids = [aws_security_group.bastion.id]
-  tags                   = merge(local.tags, { Name = "${var.project}-bastion", Role = "bastion" })
+
+  tags = merge(local.tags, {
+    Name = "${var.project}-bastion"
+    Role = "bastion"
+  })
 }
 
 resource "aws_instance" "broker" {
@@ -171,9 +237,13 @@ resource "aws_instance" "broker" {
   })
 }
 
-# ---------- 5. Ansible inventory: the list of servers, written from the real IPs ----------
+# ============================================================================
+# 5. Ansible inventory: written from the real IPs
+# ============================================================================
+
 resource "local_file" "inventory" {
   filename = "${path.module}/../ansible/inventory.ini"
+
   content = templatefile("${path.module}/inventory.tftpl", {
     bastion_ip = aws_instance.bastion.public_ip
     key_path   = abspath(local_sensitive_file.pem.filename)
